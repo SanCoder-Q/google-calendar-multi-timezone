@@ -1,0 +1,42 @@
+#+OPTIONS: H:2
+#+STARTUP: indent
+#+STARTUP: show-all
+#+PROPERTY: header-args :results silent
+
+#+TITLE: Google Calendar Multi-Timezone
+#+Author: Jianming Qu
+#+Email: sancoder.q@gmail.com
+
+[[./resources/p_icon.png]]
+
+** Intro
+This extension injects a content script into Google Calendar and duplicates selected time-zone rows so you can see extra regions directly in the calendar time grid.
+
+Clicking the extension icon opens a popup where you can edit the supported timezone config as JSON. The saved config is stored with Chrome sync storage and applied to Calendar pages automatically.
+
+The extension recognizes these labels when they already exist in Google Calendar and auto-fills the missing ones:
+
+- =CN=
+- =UK=
+- =VN=
+- =DE=
+
+If none of those labels are present, the UI is left unchanged.
+
+The default popup value is the JSON form of =DEFAULT_SUPPORTED_TIMEZONES=. If the stored JSON is invalid, the content script falls back to the built-in defaults.
+
+** Local development
+
+1. Run ~npm install~.
+2. Run ~npm run build~.
+3. Open Chrome extensions, enable developer mode, and load =dist/compiled= as an unpacked extension.
+4. Open Google Calendar and reload the page.
+
+** Structure
+
+- =src/ts/contentScript.ts= is the extension entry point.
+- =src/ts/popup.ts= powers the popup config editor.
+- =src/ts/config/supportedTimezones.ts= contains the default config and JSON validation.
+- =src/ts/lib/bootstrapContentScript.ts= is the reusable content-script bootstrap template.
+- =src/ts/features/googleCalendarExtraTimezones.ts= contains the Google Calendar DOM enhancement logic.
+

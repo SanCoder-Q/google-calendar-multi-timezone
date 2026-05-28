@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "Google Calendar Multi-Timezone",
+  "description": "Adds derived time zone lanes to the Google Calendar time grid.",
+  "version": "0.1.0",
+  "icons": {
+    "16": "resources/90.png",
+    "48": "resources/90.png",
+    "128": "resources/128.png"
+  },
+  "action": {
+    "default_title": "Google Calendar Multi-Timezone",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "resources/90.png",
+      "48": "resources/90.png",
+      "128": "resources/128.png"
+    }
+  },
+  "permissions": [
+    "storage"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://calendar.google.com/*",
+        "https://www.google.com/calendar/*"
+      ],
+      "js": [
+        "content-script.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

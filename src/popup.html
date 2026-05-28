@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Timezone Config</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <main class="popup-shell">
+    <section class="panel">
+      <p class="eyebrow">Google Calendar Multi-Timezone</p>
+      <h1>Supported timezones</h1>
+      <p class="description">
+        Edit the JSON array below to configure the country labels and IANA timezone IDs that the extension should mirror in Google Calendar.
+      </p>
+      <label class="field-label" for="config-input">JSON config</label>
+      <textarea
+        id="config-input"
+        class="config-input"
+        data-role="config-input"
+        spellcheck="false"
+      ></textarea>
+      <p class="status" data-role="status" data-tone="idle"></p>
+      <div class="actions">
+        <button class="button button-secondary" type="button" data-role="reset">Reset default</button>
+        <button class="button button-primary" type="button" data-role="save">Save</button>
+      </div>
+    </section>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>
