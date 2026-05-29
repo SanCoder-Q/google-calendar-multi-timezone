@@ -17,18 +17,25 @@ interface HourStrip {
   matrix: Element;
 }
 
+interface CloneSourceTimezone {
+  label: string;
+  timeZoneId?: string;
+  fixedOffsetHours?: number;
+}
+
 interface DetectedHourStrip extends HourStrip {
-  sourceTimezone: SupportedTimezone;
+  sourceTimezone: CloneSourceTimezone;
 }
 
 interface TimezoneCard {
   node: Element;
-  sourceTimezone: SupportedTimezone;
+  sourceTimezone: CloneSourceTimezone;
 }
 
 const MARK_ATTRIBUTE = 'data-gcal-multi-timezone';
 const STRIP_MARK_ATTRIBUTE = 'data-gcal-multi-timezone-strip';
-const TIME_LABEL_RE = /^(1[0-2]|[1-9])\s(?:AM|PM)$/i;
+const TIME_LABEL_RE = /^(?:(?:1[0-2]|[1-9])\s?(?:AM|PM)|(?:[01]?\d|2[0-3]):[0-5]\d)$/i;
+const GMT_LABEL_RE = /^GMT([+-])(\d{1,2})(?::?(\d{2}))?$/i;
 
 const elementChildren = (node: Element): Element[] => Array.from(node.children);
 
@@ -36,8 +43,17 @@ const normalizeText = (text: string | null | undefined): string => String(text |
   .replace(/\s+/g, ' ')
   .trim();
 
-const hasLabel = (items: SupportedTimezone[], label: string): boolean => {
-  return items.some((item) => item.label === label);
+const parseGmtOffsetHours = (labelText: string): number | null => {
+  const match = labelText.match(GMT_LABEL_RE);
+  if (!match) {
+    return null;
+  }
+
+  const sign = match[1] === '-' ? -1 : 1;
+  const hours = Number(match[2]);
+  const minutes = match[3] ? Number(match[3]) : 0;
+
+  return Math.round(sign * (hours + (minutes / 60)));
 };
 
 const findSupportedTimezone = (
@@ -47,6 +63,26 @@ const findSupportedTimezone = (
   return supportedTimezones.find((timezone) => timezone.label === labelText) || null;
 };
 
+const findCloneSourceTimezone = (
+  supportedTimezones: SupportedTimezone[],
+  labelText: string
+): CloneSourceTimezone | null => {
+  const supportedTimezone = findSupportedTimezone(supportedTimezones, labelText);
+  if (supportedTimezone) {
+    return supportedTimezone;
+  }
+
+  const fixedOffsetHours = parseGmtOffsetHours(labelText);
+  if (fixedOffsetHours === null) {
+    return null;
+  }
+
+  return {
+    label: labelText,
+    fixedOffsetHours
+  };
+};
+
 const getTimezoneOffsetHours = (timeZoneId: string, referenceDate: Date): number => {
   const utcDate = new Date(referenceDate.toLocaleString('en-US', { timeZone: 'UTC' }));
   const timeZoneDate = new Date(referenceDate.toLocaleString('en-US', { timeZone: timeZoneId }));
@@ -54,13 +90,28 @@ const getTimezoneOffsetHours = (timeZoneId: string, referenceDate: Date): number
   return Math.round((timeZoneDate.getTime() - utcDate.getTime()) / 3600000);
 };
 
+const getCloneSourceOffsetHours = (
+  sourceTimezone: CloneSourceTimezone,
+  referenceDate: Date
+): number => {
+  if (typeof sourceTimezone.fixedOffsetHours === 'number') {
+    return sourceTimezone.fixedOffsetHours;
+  }
+
+  if (sourceTimezone.timeZoneId) {
+    return getTimezoneOffsetHours(sourceTimezone.timeZoneId, referenceDate);
+  }
+
+  return 0;
+};
+
 const getOffsetHoursBetween = (
-  sourceTimezone: SupportedTimezone,
+  sourceTimezone: CloneSourceTimezone,
   targetTimezone: SupportedTimezone,
   referenceDate: Date = new Date()
 ): number => {
   return getTimezoneOffsetHours(targetTimezone.timeZoneId, referenceDate) -
-    getTimezoneOffsetHours(sourceTimezone.timeZoneId, referenceDate);
+    getCloneSourceOffsetHours(sourceTimezone, referenceDate);
 };
 
 const markClone = <T extends Element>(node: T): T => {
@@ -127,43 +178,17 @@ const getRowGroups = (container: Element): RowGroup[] => {
   return groups;
 };
 
-const findRowGroup = (container: Element, labelText: string): RowGroup | null => {
-  return getRowGroups(container).find((group) => group.labelText === labelText) || null;
-};
-
-const getPresentSupportedTimezones = (
+const hasCloneSourceTimezone = (
   container: Element,
   supportedTimezones: SupportedTimezone[]
-): SupportedTimezone[] => {
-  const present: SupportedTimezone[] = [];
-
-  for (const group of getRowGroups(container)) {
-    const timezone = findSupportedTimezone(supportedTimezones, group.labelText);
-    if (timezone && !hasLabel(present, timezone.label)) {
-      present.push(timezone);
-    }
-  }
-
-  return present;
+): boolean => {
+  return getRowGroups(container).some((group) => {
+    return Boolean(findCloneSourceTimezone(supportedTimezones, group.labelText));
+  });
 };
 
 const isTimeMatrix = (node: Element, supportedTimezones: SupportedTimezone[]): boolean => {
-  return getPresentSupportedTimezones(node, supportedTimezones).length > 0;
-};
-
-const findTimeMatrices = (
-  root: Document | Element,
-  supportedTimezones: SupportedTimezone[]
-): Element[] => {
-  const candidates: Element[] = [];
-
-  if (root instanceof Element && root.tagName === 'DIV') {
-    candidates.push(root);
-  }
-
-  candidates.push(...Array.from(root.querySelectorAll('div')));
-
-  return candidates.filter((candidate) => isTimeMatrix(candidate, supportedTimezones));
+  return hasCloneSourceTimezone(node, supportedTimezones);
 };
 
 const findHourStrips = (
@@ -198,22 +223,38 @@ const findHourStrips = (
 const detectStripBase = (
   strip: HourStrip,
   supportedTimezones: SupportedTimezone[]
-): SupportedTimezone | null => {
+) : CloneSourceTimezone | null => {
   const stripTexts = strip.hourCells.map((cell) => normalizeText(cell.textContent)).join('|');
 
-  for (const timezone of getPresentSupportedTimezones(strip.matrix, supportedTimezones)) {
-    const group = findRowGroup(strip.matrix, timezone.label);
-    if (!group) {
+  for (const group of getRowGroups(strip.matrix)) {
+    const sourceTimezone = findCloneSourceTimezone(supportedTimezones, group.labelText);
+    if (!sourceTimezone) {
       continue;
     }
 
     const groupTexts = group.hourNodes.map((cell) => normalizeText(cell.textContent)).join('|');
     if (groupTexts === stripTexts) {
-      return timezone;
+      return sourceTimezone;
     }
   }
 
   return null;
+};
+
+const getPresentSupportedLabelsFromSources = (
+  sources: Array<{ sourceTimezone: CloneSourceTimezone }>,
+  supportedTimezones: SupportedTimezone[]
+): string[] => {
+  const labels: string[] = [];
+
+  for (const source of sources) {
+    const supportedTimezone = findSupportedTimezone(supportedTimezones, source.sourceTimezone.label);
+    if (supportedTimezone && labels.indexOf(supportedTimezone.label) < 0) {
+      labels.push(supportedTimezone.label);
+    }
+  }
+
+  return labels;
 };
 
 const cloneHourStrip = (
@@ -283,7 +324,7 @@ const enhanceHourStrips = (
 
   stripsByParent.forEach((strips) => {
     const sourceStrip = strips[0];
-    const presentLabels = strips.map((strip) => strip.sourceTimezone.label);
+    const presentLabels = getPresentSupportedLabelsFromSources(strips, supportedTimezones);
 
     for (const targetTimezone of supportedTimezones) {
       if (presentLabels.indexOf(targetTimezone.label) < 0) {
@@ -331,7 +372,7 @@ const fixHeaderWidth = (headerContainer: Element,
   }
 
   const existingLabel = normalizeText(sourcePlaceholder.firstElementChild?.textContent);
-  if (supportedTimezones.map((tz) => tz.label).indexOf(existingLabel) < 0) {
+  if (!findCloneSourceTimezone(supportedTimezones, existingLabel)) {
     return;
   }
 
@@ -360,7 +401,7 @@ const enhanceHeaderCards = (
       continue;
     }
 
-    const sourceTimezone = findSupportedTimezone(supportedTimezones, labelText);
+    const sourceTimezone = findCloneSourceTimezone(supportedTimezones, labelText);
     if (!sourceTimezone) {
       continue;
     }
@@ -388,7 +429,7 @@ const enhanceHeaderCards = (
 
   cardsByParent.forEach((cards) => {
     const sourceCard = cards[0];
-    const presentLabels = cards.map((card) => card.sourceTimezone.label);
+    const presentLabels = getPresentSupportedLabelsFromSources(cards, supportedTimezones);
 
     for (const targetTimezone of supportedTimezones) {
       if (presentLabels.indexOf(targetTimezone.label) < 0) {
