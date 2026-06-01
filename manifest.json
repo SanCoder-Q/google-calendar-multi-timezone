@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Google Calendar Multi-Timezone",
   "description": "Adds derived time zone lanes to the Google Calendar time grid.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "icons": {
     "16": "resources/90.png",
     "48": "resources/90.png",
