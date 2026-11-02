@@ -34,6 +34,8 @@ interface TimezoneCard {
 
 const MARK_ATTRIBUTE = 'data-gcal-multi-timezone';
 const STRIP_MARK_ATTRIBUTE = 'data-gcal-multi-timezone-strip';
+const CARD_MARK_ATTRIBUTE = 'data-gcal-multi-timezone-card';
+const GOOGLE_TZ_DESCRIPTION_RE = /^\(GMT[+-]/;
 const TIME_LABEL_RE = /^(?:(?:1[0-2]|[1-9])\s?(?:AM|PM)|(?:[01]?\d|2[0-3]):[0-5]\d)$/i;
 const GMT_LABEL_RE = /^GMT([+-])(\d{1,2})(?::?(\d{2}))?$/i;
 
@@ -344,25 +346,42 @@ const cloneTimezoneCard = (
   }
 
   const existingClone = elementChildren(parent).find((child) => {
-    return child.getAttribute('data-text') === targetTimezone.label;
+    return child.getAttribute(CARD_MARK_ATTRIBUTE) === targetTimezone.label;
   });
   if (existingClone) {
     return false;
   }
 
   const clone = markClone(card.node.cloneNode(true) as Element);
-  clone.setAttribute('data-text', targetTimezone.label);
+  clone.setAttribute(CARD_MARK_ATTRIBUTE, targetTimezone.label);
+  if (clone.hasAttribute('data-text')) {
+    clone.setAttribute('data-text', targetTimezone.label);
+  }
   replaceFirstLeafText(clone, card.sourceTimezone.label, targetTimezone.label);
+
+  const labelLeaf = findLeafWithExactText(clone, targetTimezone.label);
+  if (labelLeaf && labelLeaf !== clone && labelLeaf.hasAttribute('data-text')) {
+    labelLeaf.setAttribute('data-text', describeTimezone(targetTimezone));
+  }
 
   parent.insertBefore(clone, card.node.nextSibling);
   return true;
 };
 
-const fixHeaderWidth = (headerContainer: Element,
-  supportedTimezones: SupportedTimezone[],
+const describeTimezone = (timezone: SupportedTimezone): string => {
+  const offset = getTimezoneOffsetHours(timezone.timeZoneId, new Date());
+  const sign = offset < 0 ? '-' : '+';
+  const hours = `0${Math.abs(offset)}`.slice(-2);
+  return `(GMT${sign}${hours}:00) ${timezone.timeZoneId}`;
+};
+
+// The header's first child holds invisible width sizers, one per card column.
+const fixHeaderWidth = (
+  cardsRow: Element,
+  supportedTimezones: SupportedTimezone[]
 ): void => {
-  const placeholderParent = headerContainer.firstElementChild;
-  if (!placeholderParent || placeholderParent.children.length >= supportedTimezones.length) {
+  const placeholderParent = cardsRow.parentElement?.firstElementChild;
+  if (!placeholderParent || placeholderParent === cardsRow) {
     return;
   }
 
@@ -376,18 +395,32 @@ const fixHeaderWidth = (headerContainer: Element,
     return;
   }
 
-  const fregment = document.createDocumentFragment();
-  for (const targetTimezone of supportedTimezones) {
-    if (targetTimezone.label === existingLabel) {
-      continue;
-    }
-
-    const clonePlaceholder = markClone(sourcePlaceholder.cloneNode(true) as Element);
-    replaceFirstLeafText(clonePlaceholder, existingLabel, targetTimezone.label);
-    fregment.appendChild(clonePlaceholder);
+  const missing = cardsRow.children.length - placeholderParent.children.length;
+  const fragment = document.createDocumentFragment();
+  for (let index = 0; index < missing; index += 1) {
+    fragment.appendChild(markClone(sourcePlaceholder.cloneNode(true) as Element));
   }
-  placeholderParent.insertBefore(fregment, sourcePlaceholder);
-}
+  placeholderParent.insertBefore(fragment, sourcePlaceholder);
+};
+
+const resolveHeaderCard = (
+  node: Element,
+  supportedTimezones: SupportedTimezone[]
+): TimezoneCard | null => {
+  const dataText = node.getAttribute('data-text') || '';
+  const directTimezone = findCloneSourceTimezone(supportedTimezones, dataText);
+  if (directTimezone) {
+    return { node, sourceTimezone: directTimezone };
+  }
+
+  // Newer Calendar markup: data-text holds "(GMT+01:00) ...", the short label is the leaf's text and the card is its parent.
+  if (!GOOGLE_TZ_DESCRIPTION_RE.test(dataText) || node.children.length > 0 || !node.parentElement) {
+    return null;
+  }
+
+  const sourceTimezone = findCloneSourceTimezone(supportedTimezones, normalizeText(node.textContent));
+  return sourceTimezone ? { node: node.parentElement, sourceTimezone } : null;
+};
 
 const enhanceHeaderCards = (
   root: Document | Element,
@@ -396,30 +429,17 @@ const enhanceHeaderCards = (
   const cardsByParent = new Map<Element, TimezoneCard[]>();
 
   for (const node of Array.from(root.querySelectorAll('[data-text]'))) {
-    const labelText = node.getAttribute('data-text');
-    if (!labelText) {
+    const card = resolveHeaderCard(node, supportedTimezones);
+    if (!card) {
       continue;
     }
 
-    const sourceTimezone = findCloneSourceTimezone(supportedTimezones, labelText);
-    if (!sourceTimezone) {
-      continue;
-    }
-
-    const parent = node.parentElement;
+    const parent = card.node.parentElement;
     if (!parent) {
       continue;
     }
 
-    const headerContainer = parent.parentElement;
-    if (!headerContainer) {
-      continue;
-    }
-
-    fixHeaderWidth(headerContainer, supportedTimezones);
-
     const cards = cardsByParent.get(parent);
-    const card: TimezoneCard = { node, sourceTimezone };
     if (cards) {
       cards.push(card);
     } else {
@@ -427,7 +447,7 @@ const enhanceHeaderCards = (
     }
   }
 
-  cardsByParent.forEach((cards) => {
+  cardsByParent.forEach((cards, cardsRow) => {
     const sourceCard = cards[0];
     const presentLabels = getPresentSupportedLabelsFromSources(cards, supportedTimezones);
 
@@ -436,6 +456,8 @@ const enhanceHeaderCards = (
         cloneTimezoneCard(sourceCard, targetTimezone);
       }
     }
+
+    fixHeaderWidth(cardsRow, supportedTimezones);
   });
 };
 
