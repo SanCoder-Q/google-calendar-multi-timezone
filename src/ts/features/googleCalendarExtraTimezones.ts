@@ -36,7 +36,7 @@ const MARK_ATTRIBUTE = 'data-gcal-multi-timezone';
 const STRIP_MARK_ATTRIBUTE = 'data-gcal-multi-timezone-strip';
 const CARD_MARK_ATTRIBUTE = 'data-gcal-multi-timezone-card';
 const GOOGLE_TZ_DESCRIPTION_RE = /^\(GMT[+-]/;
-const TIME_LABEL_RE = /^(?:(?:1[0-2]|[1-9])\s?(?:AM|PM)|(?:[01]?\d|2[0-3]):[0-5]\d)$/i;
+const TIME_LABEL_RE = /^(?:(?:1[0-2]|[1-9])(?::[0-5]\d)?\s?(?:AM|PM)|(?:[01]?\d|2[0-3]):[0-5]\d)$/i;
 const GMT_LABEL_RE = /^GMT([+-])(\d{1,2})(?::?(\d{2}))?$/i;
 
 const elementChildren = (node: Element): Element[] => Array.from(node.children);
@@ -55,7 +55,7 @@ const parseGmtOffsetHours = (labelText: string): number | null => {
   const hours = Number(match[2]);
   const minutes = match[3] ? Number(match[3]) : 0;
 
-  return Math.round(sign * (hours + (minutes / 60)));
+  return sign * (hours + (minutes / 60));
 };
 
 const findSupportedTimezone = (
@@ -89,7 +89,7 @@ const getTimezoneOffsetHours = (timeZoneId: string, referenceDate: Date): number
   const utcDate = new Date(referenceDate.toLocaleString('en-US', { timeZone: 'UTC' }));
   const timeZoneDate = new Date(referenceDate.toLocaleString('en-US', { timeZone: timeZoneId }));
 
-  return Math.round((timeZoneDate.getTime() - utcDate.getTime()) / 3600000);
+  return (timeZoneDate.getTime() - utcDate.getTime()) / 3600000;
 };
 
 const getCloneSourceOffsetHours = (
@@ -121,19 +121,30 @@ const markClone = <T extends Element>(node: T): T => {
   return node;
 };
 
-const rotateArray = <T>(items: T[], offsetHours: number): T[] => {
-  const list = Array.from(items);
-  const length = list.length;
-  if (length === 0) {
-    return list;
+const shiftTimeLabel = (label: string, offsetHours: number): string => {
+  const match = label.match(/^(\d{1,2})(?::(\d{2}))?(\s*)(AM|PM)?$/i);
+  if (!match || !TIME_LABEL_RE.test(label)) {
+    return label;
   }
 
-  const rightRotation = ((-offsetHours % length) + length) % length;
-  if (rightRotation === 0) {
-    return list;
+  const meridiem = match[4];
+  const sourceHour = meridiem
+    ? Number(match[1]) % 12 + (meridiem.toUpperCase() === 'PM' ? 12 : 0)
+    : Number(match[1]);
+  const minutes = ((sourceHour * 60 + Number(match[2] || 0) +
+    Math.round(offsetHours * 60)) % 1440 + 1440) % 1440;
+  const hour = Math.floor(minutes / 60);
+  const minuteText = `0${minutes % 60}`.slice(-2);
+
+  if (!meridiem) {
+    const hourText = match[1].length === 2 ? `0${hour}`.slice(-2) : String(hour);
+    return `${hourText}:${minuteText}`;
   }
 
-  return list.slice(length - rightRotation).concat(list.slice(0, length - rightRotation));
+  const suffix = hour < 12 ? 'AM' : 'PM';
+  const formattedSuffix = meridiem === meridiem.toLowerCase() ? suffix.toLowerCase() : suffix;
+  const minutePart = minutes % 60 !== 0 ? `:${minuteText}` : '';
+  return `${hour % 12 || 12}${minutePart}${match[3]}${formattedSuffix}`;
 };
 
 const findLeafWithExactText = (root: Element, expectedText: string): Element | null => {
@@ -152,6 +163,18 @@ const replaceFirstLeafText = (root: Element, fromText: string, toText: string): 
 
   target.textContent = toText;
   return true;
+};
+
+const shiftTimeLabels = (root: Element, offsetHours: number): void => {
+  for (const node of Array.from(root.querySelectorAll('div, span'))) {
+    if (node.children.length === 0) {
+      const label = normalizeText(node.textContent);
+      const shiftedLabel = shiftTimeLabel(label, offsetHours);
+      if (shiftedLabel !== label) {
+        node.textContent = shiftedLabel;
+      }
+    }
+  }
 };
 
 const getRowGroups = (container: Element): RowGroup[] => {
@@ -261,8 +284,7 @@ const getPresentSupportedLabelsFromSources = (
 
 const cloneHourStrip = (
   strip: DetectedHourStrip,
-  targetTimezone: SupportedTimezone,
-  supportedTimezones: SupportedTimezone[]
+  targetTimezone: SupportedTimezone
 ): boolean => {
   const parent = strip.node.parentElement;
   if (!parent) {
@@ -281,13 +303,11 @@ const cloneHourStrip = (
 
   const cloneChildren = elementChildren(clone);
   const cloneHourCells = cloneChildren.slice(0, 24);
-  const cloneMatrix = cloneChildren.slice(24).find((child) => {
-    return isTimeMatrix(child, supportedTimezones);
-  }) || null;
   const offsetHours = getOffsetHoursBetween(strip.sourceTimezone, targetTimezone);
 
-  rotateArray(cloneHourCells, offsetHours).forEach((cell) => {
-    clone.insertBefore(cell, cloneMatrix);
+  cloneHourCells.forEach((cell) => {
+    const originalText = normalizeText(cell.textContent);
+    replaceFirstLeafText(cell, originalText, shiftTimeLabel(originalText, offsetHours));
   });
 
   parent.insertBefore(clone, strip.node.nextSibling);
@@ -330,7 +350,7 @@ const enhanceHourStrips = (
 
     for (const targetTimezone of supportedTimezones) {
       if (presentLabels.indexOf(targetTimezone.label) < 0) {
-        cloneHourStrip(sourceStrip, targetTimezone, supportedTimezones);
+        cloneHourStrip(sourceStrip, targetTimezone);
       }
     }
   });
@@ -354,6 +374,7 @@ const cloneTimezoneCard = (
 
   const clone = markClone(card.node.cloneNode(true) as Element);
   clone.setAttribute(CARD_MARK_ATTRIBUTE, targetTimezone.label);
+  shiftTimeLabels(clone, getOffsetHoursBetween(card.sourceTimezone, targetTimezone));
   if (clone.hasAttribute('data-text')) {
     clone.setAttribute('data-text', targetTimezone.label);
   }
@@ -371,8 +392,10 @@ const cloneTimezoneCard = (
 const describeTimezone = (timezone: SupportedTimezone): string => {
   const offset = getTimezoneOffsetHours(timezone.timeZoneId, new Date());
   const sign = offset < 0 ? '-' : '+';
-  const hours = `0${Math.abs(offset)}`.slice(-2);
-  return `(GMT${sign}${hours}:00) ${timezone.timeZoneId}`;
+  const totalMinutes = Math.round(Math.abs(offset) * 60);
+  const hours = `0${Math.floor(totalMinutes / 60)}`.slice(-2);
+  const minutes = `0${totalMinutes % 60}`.slice(-2);
+  return `(GMT${sign}${hours}:${minutes}) ${timezone.timeZoneId}`;
 };
 
 // The header's first child holds invisible width sizers, one per card column.
@@ -385,20 +408,41 @@ const fixHeaderWidth = (
     return;
   }
 
-  const sourcePlaceholder = placeholderParent.firstElementChild;
+  const sourcePlaceholder = elementChildren(placeholderParent).find((node) => !node.hasAttribute(MARK_ATTRIBUTE));
   if (!sourcePlaceholder) {
     return;
   }
 
   const existingLabel = normalizeText(sourcePlaceholder.firstElementChild?.textContent);
-  if (!findCloneSourceTimezone(supportedTimezones, existingLabel)) {
+  const sourceTimezone = findCloneSourceTimezone(supportedTimezones, existingLabel);
+  if (!sourceTimezone) {
     return;
   }
 
-  const missing = cardsRow.children.length - placeholderParent.children.length;
+  const generatedCards = elementChildren(cardsRow).filter((card) => card.hasAttribute(CARD_MARK_ATTRIBUTE));
+  const existingClones = elementChildren(placeholderParent).filter((node) => node.hasAttribute(MARK_ATTRIBUTE));
+  const nativeCount = placeholderParent.children.length - existingClones.length;
+  const nativeCards = cardsRow.children.length - generatedCards.length;
+  if (nativeCount !== nativeCards) {
+    return;
+  }
+
   const fragment = document.createDocumentFragment();
-  for (let index = 0; index < missing; index += 1) {
-    fragment.appendChild(markClone(sourcePlaceholder.cloneNode(true) as Element));
+  for (const card of generatedCards) {
+    const label = card.getAttribute(CARD_MARK_ATTRIBUTE) || '';
+    if (existingClones.some((node) => node.getAttribute(CARD_MARK_ATTRIBUTE) === label)) {
+      continue;
+    }
+
+    const targetTimezone = findSupportedTimezone(supportedTimezones, label);
+    if (!targetTimezone) {
+      continue;
+    }
+
+    const placeholder = markClone(sourcePlaceholder.cloneNode(true) as Element);
+    placeholder.setAttribute(CARD_MARK_ATTRIBUTE, label);
+    shiftTimeLabels(placeholder, getOffsetHoursBetween(sourceTimezone, targetTimezone));
+    fragment.appendChild(placeholder);
   }
   placeholderParent.insertBefore(fragment, sourcePlaceholder);
 };

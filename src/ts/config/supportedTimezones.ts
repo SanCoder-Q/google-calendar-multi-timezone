@@ -7,7 +7,8 @@ export const DEFAULT_SUPPORTED_TIMEZONES: SupportedTimezone[] = [
   { label: 'CN', timeZoneId: 'Asia/Shanghai' },
   { label: 'VN', timeZoneId: 'Asia/Ho_Chi_Minh' },
   { label: 'DE', timeZoneId: 'Europe/Berlin' },
-  { label: 'UK', timeZoneId: 'Europe/London' }
+  { label: 'UK', timeZoneId: 'Europe/London' },
+  { label: 'IN', timeZoneId: 'Asia/Kolkata' }
 ];
 
 const normalizeSupportedTimezone = (timezone: SupportedTimezone): SupportedTimezone => {
